@@ -97,6 +97,7 @@ func New(opts ...Option) (*Cipher, error) {
 				key[i] = 0
 			}
 		}
+		cfg.keys = nil // Clear reference to prevent accidental access
 	}()
 
 	// Derive keys for each master key (cache at initialization)
