@@ -1,0 +1,14 @@
+Tool:      rgemini
+Model: gemini-3-pro-preview
+Codebase:  encryptedcol
+Output:    /Users/cliff/Desktop/_code/encryptedcol/_rcodegen
+Command:   rgemini suite
+Started:   2026-01-19 19:04:47
+Ended:     2026-01-19 19:15:16
+Duration:  10m 28s
+Exit Code: 0
+
+--- Token Usage ---
+Input:     115402
+Output:    2005
+Cache Read: 78376

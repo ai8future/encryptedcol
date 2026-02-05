@@ -1,0 +1,52 @@
+# Secrets
+.env
+.env.local
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+.venv/
+venv/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# PHP
+/vendor
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.html
+go.work
+go.work.sum
+.gocache/
+vendor/
+
+# Node
+node_modules/
+dist/
+
+# IDE/Editor
+.idea/
+/.idea
+.vscode/
+*.swp
+*.swo
+*~
+
+# Claude
+.claude/settings.local.json

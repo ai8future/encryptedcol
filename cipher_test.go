@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/nacl/secretbox"
 )
 
 func testKey(id string) []byte {
@@ -482,4 +483,75 @@ func TestNew_DefaultKeyID_AlwaysSetByWithKey(t *testing.T) {
 	// Additional WithKey calls don't change it
 	WithKey("alpha", testKey("alpha"))(cfg)
 	require.Equal(t, "zebra", cfg.defaultKeyID, "defaultKeyID should remain first key")
+}
+
+// TestOpen_InnerKeyIDMismatch tests the key confusion attack defense.
+// This is a security-critical test that verifies the inner key_id
+// (authenticated by secretbox) detects when outer key_id is tampered.
+func TestOpen_InnerKeyIDMismatch(t *testing.T) {
+	cipher, _ := New(
+		WithKey("v1", testKey("v1")),
+		WithKey("v2", testKey("v2")),
+	)
+
+	// Manually construct ciphertext with mismatched inner/outer key IDs:
+	// - Outer key_id = "v1" (so cipher looks up v1 key)
+	// - Inner key_id = "v2" (different from outer)
+	// - Encrypt with v1 key (so decryption succeeds)
+	// This simulates an attacker who swapped the outer key_id header
+
+	plaintext := []byte("secret data")
+	wrongInnerKeyID := "v2"
+
+	// Format inner plaintext with WRONG key ID
+	innerPlaintext := formatInnerPlaintext(wrongInnerKeyID, plaintext)
+
+	// Encrypt with v1 key (correct key for outer header)
+	keys := cipher.keys["v1"]
+	nonce := generateNonce()
+	encrypted := secretbox.Seal(nil, innerPlaintext, &nonce, &keys.encryption)
+
+	// Format outer ciphertext with v1 (so it passes key lookup)
+	ciphertext := formatCiphertext(flagNoCompression, "v1", nonce, encrypted)
+
+	// Open should succeed in decryption but fail inner key_id verification
+	_, err := cipher.Open(ciphertext)
+	require.ErrorIs(t, err, ErrKeyIDMismatch)
+}
+
+// TestOpen_InvalidInnerPlaintext tests handling of malformed decrypted data.
+// After successful decryption, the inner plaintext must have valid format.
+func TestOpen_InvalidInnerPlaintext(t *testing.T) {
+	cipher, _ := New(WithKey("v1", testKey("v1")))
+
+	keys := cipher.keys["v1"]
+	nonce := generateNonce()
+
+	tests := []struct {
+		name         string
+		innerPayload []byte
+		wantErr      error
+	}{
+		{
+			name:         "single byte (missing key_id)",
+			innerPayload: []byte{0x00}, // keyIDLen=0 is invalid
+			wantErr:      ErrInvalidFormat,
+		},
+		{
+			name:         "keyIDLen exceeds data",
+			innerPayload: []byte{0x05, 'v', '1'}, // claims 5 bytes but only has 2
+			wantErr:      ErrInvalidFormat,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Encrypt the invalid inner payload
+			encrypted := secretbox.Seal(nil, tt.innerPayload, &nonce, &keys.encryption)
+			ciphertext := formatCiphertext(flagNoCompression, "v1", nonce, encrypted)
+
+			_, err := cipher.Open(ciphertext)
+			require.ErrorIs(t, err, tt.wantErr)
+		})
+	}
 }
