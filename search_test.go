@@ -178,6 +178,8 @@ func TestSearchCondition_InvalidColumnName(t *testing.T) {
 		{"special chars", "email$1"},
 		{"spaces", "email name"},
 		{"quotes", "email'"},
+		{"starts with digit", "1email"},
+		{"only digits", "123"},
 	}
 
 	for _, tt := range tests {

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.3] - 2026-03-27
+
+### Added
+- Test coverage improvements from 95.7% to 97.4% based on rcodegen report analysis (Claude:Opus 4.6)
+- `TestOpenWithKey_SuccessPath` - covers happy path of explicit-key decryption
+- `TestOpenWithKey_InvalidFormat` - covers parseFormat error path in OpenWithKey
+- `TestOpenWithKey_OuterKeyIDMismatch` - covers outer key ID verification in OpenWithKey
+- `TestOpenJSON_DecryptionError` - covers Open() error propagation in OpenJSON
+- `TestOpenInt64_DecryptionError` - covers Open() error propagation in OpenInt64
+- `TestWithKey_InitializesNilKeysMap` - covers defensive nil map check in WithKey
+- `TestDecompressZstd_ExceedsMaxSize` - covers zip bomb protection (64MB limit)
+- `TestDecompressZstd_AtExactLimit` - covers boundary at exactly maxDecompressedSize
+- Column name validation tests for digit-first characters (starts_with_digit, only_digits)
+
 ## [1.0.2] - 2026-03-07
 - Sync uncommitted changes
 

@@ -14,6 +14,19 @@ func TestWithKey(t *testing.T) {
 	require.Equal(t, "v1", cipher.DefaultKeyID())
 }
 
+func TestWithKey_InitializesNilKeysMap(t *testing.T) {
+	// Tests the defensive nil check at options.go:12
+	// When config.keys is nil (zero-value struct), WithKey should initialize it
+	cfg := &config{} // keys is nil, not initialized by defaultConfig()
+
+	opt := WithKey("v1", testKey("v1"))
+	opt(cfg)
+
+	require.NotNil(t, cfg.keys)
+	require.Len(t, cfg.keys, 1)
+	require.Equal(t, "v1", cfg.defaultKeyID)
+}
+
 func TestWithKey_Multiple(t *testing.T) {
 	cipher, err := New(
 		WithKey("v1", testKey("v1")),

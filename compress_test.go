@@ -179,6 +179,43 @@ func TestCompressZstd_Concurrent(t *testing.T) {
 	}
 }
 
+func TestDecompressZstd_ExceedsMaxSize(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping large allocation test in short mode")
+	}
+
+	// Create data larger than maxDecompressedSize (64MB).
+	// Highly repetitive data compresses extremely well, making this a
+	// realistic zip bomb scenario.
+	largeData := bytes.Repeat([]byte("AAAAAAAAAA"), 7*1024*1024) // 70MB of 'A's
+
+	compressed, err := compressZstd(largeData)
+	require.NoError(t, err, "compression should succeed")
+
+	// Verify it's actually a small compressed payload (zip bomb characteristic)
+	require.Less(t, len(compressed), 1024*1024, "should compress to under 1MB")
+
+	// Decompression should fail due to size limit
+	_, err = decompressZstd(compressed)
+	require.ErrorIs(t, err, ErrDecompressionFailed, "should reject oversized decompression")
+}
+
+func TestDecompressZstd_AtExactLimit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping large allocation test in short mode")
+	}
+
+	// Test at exactly maxDecompressedSize boundary (64MB)
+	data := make([]byte, maxDecompressedSize)
+	compressed, err := compressZstd(data)
+	require.NoError(t, err)
+
+	// Should succeed at exactly the limit
+	result, err := decompressZstd(compressed)
+	require.NoError(t, err)
+	require.Len(t, result, maxDecompressedSize)
+}
+
 func TestMaybeCompress_ExactThreshold(t *testing.T) {
 	// Data exactly at threshold
 	data := make([]byte, 1024)

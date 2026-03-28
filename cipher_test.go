@@ -488,6 +488,50 @@ func TestNew_DefaultKeyID_AlwaysSetByWithKey(t *testing.T) {
 // TestOpen_InnerKeyIDMismatch tests the key confusion attack defense.
 // This is a security-critical test that verifies the inner key_id
 // (authenticated by secretbox) detects when outer key_id is tampered.
+func TestOpenWithKey_SuccessPath(t *testing.T) {
+	cipher, _ := New(
+		WithKey("v1", testKey("v1")),
+		WithKey("v2", testKey("v2")),
+	)
+
+	plaintext := []byte("test data for explicit key decryption")
+
+	// Encrypt with v1
+	ct, err := cipher.SealWithKey("v1", plaintext)
+	require.NoError(t, err)
+
+	// Decrypt explicitly with v1 (should succeed - outer key_id matches)
+	result, err := cipher.OpenWithKey("v1", ct)
+	require.NoError(t, err)
+	require.Equal(t, plaintext, result)
+}
+
+func TestOpenWithKey_InvalidFormat(t *testing.T) {
+	cipher, _ := New(WithKey("v1", testKey("v1")))
+
+	// Ciphertext too short to parse
+	_, err := cipher.OpenWithKey("v1", []byte{0x00, 0x01})
+	require.ErrorIs(t, err, ErrInvalidFormat)
+}
+
+func TestOpenWithKey_OuterKeyIDMismatch(t *testing.T) {
+	// This tests the outer key ID check in OpenWithKey (cipher.go:252-254).
+	// When OpenWithKey("v2", ciphertext_encrypted_with_v1), the outer key_id
+	// in the ciphertext header is "v1" which doesn't match the requested "v2".
+	cipher, _ := New(
+		WithKey("v1", testKey("v1")),
+		WithKey("v2", testKey("v2")),
+		WithDefaultKeyID("v1"),
+	)
+
+	// Encrypt with v1 (outer key_id = "v1")
+	ciphertext := cipher.Seal([]byte("test data"))
+
+	// Try to decrypt with v2 - outer key_id "v1" != requested "v2"
+	_, err := cipher.OpenWithKey("v2", ciphertext)
+	require.ErrorIs(t, err, ErrKeyIDMismatch)
+}
+
 func TestOpen_InnerKeyIDMismatch(t *testing.T) {
 	cipher, _ := New(
 		WithKey("v1", testKey("v1")),

@@ -358,6 +358,33 @@ func TestOpenJSON_StructFieldMismatch(t *testing.T) {
 	require.Error(t, err, "should fail when string cannot be decoded to int")
 }
 
+func TestOpenJSON_DecryptionError(t *testing.T) {
+	cipher1, _ := New(WithKey("v1", testKey("v1")))
+	cipher2, _ := New(WithKey("v2", testKey("v2")))
+
+	type TestData struct {
+		Name string `json:"name"`
+	}
+
+	ciphertext, err := SealJSON(cipher1, TestData{Name: "test"})
+	require.NoError(t, err)
+
+	// cipher2 doesn't have v1 key, so Open() fails before unmarshal
+	_, err = OpenJSON[TestData](cipher2, ciphertext)
+	require.ErrorIs(t, err, ErrKeyNotFound)
+}
+
+func TestOpenInt64_DecryptionError(t *testing.T) {
+	cipher1, _ := New(WithKey("v1", testKey("v1")))
+	cipher2, _ := New(WithKey("v2", testKey("v2")))
+
+	ciphertext := cipher1.SealInt64(42)
+
+	// cipher2 doesn't have v1 key, so Open() fails before length check
+	_, err := cipher2.OpenInt64(ciphertext)
+	require.ErrorIs(t, err, ErrKeyNotFound)
+}
+
 func TestSealJSONIndexed_MarshalError(t *testing.T) {
 	cipher, _ := New(WithKey("v1", testKey("v1")))
 
