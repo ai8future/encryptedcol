@@ -4,6 +4,8 @@ Client-side encrypted columns for PostgreSQL/Supabase with blind indexing for se
 
 Data is encrypted before it leaves your application. The database stores only ciphertext and opaque blind indexes — it never sees plaintext.
 
+`encryptedcol` is part of **db_sql_suite** (database security and multi-tenant data management). It is a standalone Go module with no database driver dependencies, so it drops into any Go service that talks to PostgreSQL or Supabase — alongside the suite's `tablebox` data-ingestion platform or on its own.
+
 ## Features
 
 - **XSalsa20-Poly1305** authenticated encryption (NaCl secretbox)
@@ -360,6 +362,17 @@ go test -bench=. ./...     # Benchmarks
 | `golang.org/x/crypto/hkdf` | HKDF-SHA256 key derivation |
 | `github.com/klauspost/compress/zstd` | Zstd compression |
 | `github.com/stretchr/testify` | Test assertions (test-only) |
+
+## Where It Fits
+
+The library is designed to live in the **repository / data-access layer** of a Go application. Domain models stay plain structs with no encryption awareness; the repository encrypts on write, decrypts on read, and computes blind indexes for search.
+
+```
+[Domain Model]  <-->  [Repository + encryptedcol]  <-->  [PostgreSQL / Supabase]
+   (plaintext)        (encrypt/decrypt/index)            (ciphertext + blind indexes)
+```
+
+Within **db_sql_suite**, `encryptedcol` is the column-level confidentiality layer. Its sibling `tablebox` is a multi-tenant data-ingestion and querying platform; `encryptedcol` ships independently (no driver coupling) and can be adopted by any service in or outside the suite.
 
 ## License
 

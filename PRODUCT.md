@@ -1,244 +1,146 @@
-# encryptedcol -- Product Overview
+# What Is encryptedcol?
 
-## What This Product Is
+encryptedcol is a **Go library for client-side, column-level encryption** with searchable blind indexing, purpose-built for applications backed by PostgreSQL or Supabase. It encrypts sensitive fields — personally identifiable information (PII), financial data, health records, credentials — **before** they ever reach the database, so the data store holds only opaque ciphertext and opaque HMAC hashes. The result is a **zero-knowledge storage model**: a database dump, a rogue DBA, a leaked connection string, or a cloud-provider incident yields nothing intelligible.
 
-encryptedcol is a Go library that encrypts sensitive data **before** it ever reaches the database. It is purpose-built for applications that use PostgreSQL or Supabase as their data store and need to protect personally identifiable information (PII), financial data, health records, or any other sensitive field at the column level -- while still being able to search on those fields.
-
-The library sits in the application layer. The database never sees, processes, or stores plaintext for any field protected by encryptedcol. What it stores is opaque ciphertext and opaque HMAC-based hashes. This establishes a **zero-knowledge storage model**: a compromised database, a rogue DBA, or a Supabase breach yields nothing intelligible.
+Within **db_sql_suite** (Cliff's database-security and multi-tenant data-management suite), encryptedcol is the **column-confidentiality layer**. Its sibling `tablebox` handles multi-tenant data ingestion and querying; encryptedcol ships as an independent Go module with no database-driver dependency, so any Go service in or outside the suite can adopt it.
 
 ---
 
-## Why This Product Exists
+# Why Does It Exist?
 
-### The Core Business Problem
+### The Core Problem
 
-Modern applications collect and store sensitive user data -- emails, phone numbers, social security numbers, medical records, financial identifiers. Regulations (GDPR, HIPAA, PCI-DSS, SOC 2) and customer trust demand that this data be protected. The typical approach -- encrypting data at rest via database-level transparent data encryption (TDE) -- has a fundamental weakness: the database itself can still read the data. A SQL injection, a leaked connection string, a compromised database admin, or a cloud provider incident exposes plaintext to the attacker.
+Modern applications collect sensitive user data — emails, phone numbers, government IDs, medical records, financial identifiers. Compliance frameworks (General Data Protection Regulation (GDPR), Health Insurance Portability and Accountability Act (HIPAA), Payment Card Industry Data Security Standard (PCI-DSS), System and Organization Controls 2 (SOC 2)) and basic customer trust demand this data be protected at rest. The common approach — database-level Transparent Data Encryption (TDE) — has a fundamental weakness: **the database itself can still read the plaintext.** A SQL injection that reads data, a leaked connection string, a compromised admin, or a cloud incident exposes everything.
 
-Client-side encryption eliminates this attack surface entirely. Data is encrypted in the application before the INSERT and decrypted in the application after the SELECT. The database is a dumb byte store.
+Client-side encryption removes that attack surface: data is encrypted in the application before the `INSERT` and decrypted after the `SELECT`. The database becomes a dumb byte store.
 
-### The Search Problem
+The naive version of this, however, makes data **unsearchable** — you cannot write `WHERE email = 'alice@example.com'` against random-looking ciphertext. That forces a painful choice: give up search (and scan/decrypt entire tables in the app) or give up encryption.
 
-The naive version of client-side encryption makes data unsearchable. If you encrypt an email address, you can no longer write `WHERE email = 'alice@example.com'` because the database only has random-looking ciphertext. This forces a painful choice: either you give up search (and scan/decrypt the entire table in the application) or you give up encryption.
+### The Business Goal / Business Case
 
-encryptedcol solves this with **blind indexing**. Alongside each encrypted value, the library stores a keyed HMAC hash (the "blind index"). The database can use a standard B-tree index on this hash for efficient exact-match lookups -- without ever learning the plaintext. The application computes the same HMAC for the search term and hands it to the database: `WHERE email_idx = <hash>`. The database finds the row, returns the ciphertext, and the application decrypts it.
+encryptedcol exists to deliver **encrypted storage that stays practically searchable**, plus the operational tooling to run it for real:
 
-This is the central value proposition: **encrypted storage with practical searchability**.
-
-### The Operational Problem
-
-Encryption key management is operationally complex. Keys must be rotated periodically (compliance requirements, suspected compromise, employee offboarding). During rotation, the database contains a mix of data encrypted under the old key and data encrypted under the new key. Both must remain readable, and searches must work across both key versions seamlessly.
-
-encryptedcol treats this as a first-class concern with multi-key support, automatic cross-version search, and dedicated rotation utilities.
-
----
-
-## Who This Product Is For
-
-- **Go application developers** building on PostgreSQL or Supabase who handle sensitive user data.
-- **Engineering teams** subject to compliance frameworks (GDPR, HIPAA, PCI-DSS, SOC 2) that require encryption of PII at rest with key rotation capabilities.
-- **SaaS platforms** that want to offer their customers a credible data protection story ("we cannot read your data even if our database is breached").
-- **Multi-project organizations** that need a reusable, standalone encryption layer across multiple Go services (the library is a standalone Go module with no database driver dependencies).
+1. **Eliminate the database as an attack surface** for sensitive data — plaintext never arrives there.
+2. **Preserve core access patterns** (login lookup, deduplication, user search) via blind indexing, so encryption doesn't break workflows.
+3. **Enable compliance** with regulations that mandate encryption at rest *and* periodic key rotation.
+4. **Minimize the operational burden of key rotation** with zero-downtime migration tooling and automatic cross-version search.
+5. **Integrate with enterprise key management** through a pluggable provider interface.
+6. **Stay reusable** — a standalone Go module with no driver coupling, usable across many services.
+7. **Preserve application semantics** (NULL handling, original casing, empty-string distinction) so encryption is transparent to business logic.
 
 ---
 
-## What the Product Does -- Business Capabilities
+# Who Does It Serve?
+
+The direct consumers are **Go services and their repository layers**; the indirect beneficiaries are the teams and platforms that depend on those services keeping data confidential.
+
+- **Go application developers** on PostgreSQL or Supabase who handle sensitive user data.
+- **Engineering teams under compliance frameworks** (GDPR, HIPAA, PCI-DSS, SOC 2) that require encryption of PII at rest with key-rotation capability.
+- **SaaS platforms** that want a credible "we cannot read your data even if our database is breached" story.
+- **Multi-project organizations** needing a single reusable encryption layer across services — the library is a standalone Go module with no database-driver dependency.
+
+---
+
+# Business Capabilities
 
 ### 1. Zero-Knowledge Column Encryption
-
-Any database column can be encrypted client-side. The library converts plaintext to ciphertext on write and reverses it on read. The database stores BYTEA (binary) columns containing opaque ciphertext.
-
-**Business value:** Even a full database dump or a compromised cloud account reveals nothing. This satisfies the strongest interpretation of "encryption at rest" requirements and dramatically reduces breach impact.
-
-**Supported data types:**
-- Strings (names, emails, addresses, notes, freeform text)
-- Integers (account numbers, monetary amounts, ages)
-- JSON/structured data (user profiles, preferences, metadata objects, API payloads)
-- Raw binary (any byte payload)
-- Nullable fields (NULL in the database maps to nil in Go and passes through unchanged)
+Any column can be encrypted client-side. Plaintext becomes ciphertext on write and is reversed on read; the database stores `BYTEA` columns of opaque bytes. Supported payloads: strings, `int64`, JSON/structured data (via generics), raw binary, and nullable fields (`nil` passes through unchanged). **Business value:** even a full database dump or a compromised cloud account reveals nothing, satisfying the strongest reading of "encryption at rest" and sharply reducing breach impact.
 
 ### 2. Searchable Encryption via Blind Indexes
-
-For fields that need exact-match search (email lookup at login, phone number lookup for deduplication, username search), the library computes a deterministic HMAC-SHA256 hash alongside the encrypted value. This hash is stored in a separate `_idx` column and indexed with a standard PostgreSQL B-tree index.
-
-**Business value:** Encrypted fields remain queryable for the most common database access pattern -- exact-match lookup. Login flows, deduplication checks, user search, and foreign-key-style lookups all continue to work without application-side full-table scans.
-
-**Important trade-off the product explicitly accepts:** Blind indexes reveal equality. Two rows with the same email will have the same blind index hash. This is appropriate for high-entropy fields (emails, usernames, phone numbers, UUIDs) but inappropriate for low-entropy fields (status enums, boolean flags, country codes) where frequency analysis could reveal patterns. The product documents this trade-off clearly and advises users accordingly.
+For fields that need exact-match search, the library computes a deterministic HMAC-SHA256 hash (the "blind index") alongside the ciphertext, stored in a separate `_idx` column and indexed with a standard PostgreSQL B-tree. The app computes the same HMAC for the search term: `WHERE email_idx = <hash>`. **Business value:** encrypted fields stay queryable for the most common access pattern (exact-match lookup) — login, deduplication, user search, and foreign-key-style lookups keep working without app-side full-table scans.
 
 ### 3. Input Normalization for Consistent Search
-
-Users type the same data in different ways. An email might be entered as `Alice@Example.COM`, `alice@example.com`, or ` ALICE@EXAMPLE.COM `. Without normalization, each of these would produce a different blind index hash, and search would fail.
-
-The library provides built-in normalizers that canonicalize input before computing the blind index:
-
-| Normalizer | What It Does | Business Use Case |
-|---|---|---|
-| NormalizeEmail | lowercase + trim whitespace | Case-insensitive email lookup |
-| NormalizeUsername | lowercase + trim whitespace | Case-insensitive username search |
-| NormalizePhone | strip all non-digit characters | Phone lookup regardless of formatting (dashes, parens, country prefix) |
-| NormalizeTrim | trim whitespace only | Whitespace-insensitive, case-sensitive fields |
-| NormalizeLower | lowercase only | General case-insensitive matching |
-| NormalizeNone | identity (no change) | Exact binary match (SSN, UUID) |
-
-**Critical design decision:** Normalization is applied only to the blind index. The encrypted value always preserves the original input exactly as entered. When the data is decrypted, the user sees their original casing and formatting. Normalization is invisible to the end user -- it only affects searchability.
+The same value gets typed many ways (`Alice@Example.COM`, ` alice@example.com `). Built-in normalizers canonicalize input *before* computing the blind index, so all variants match. **Business value:** search "just works" across natural input variation. **Key design point:** normalization is applied **only** to the blind index — the ciphertext always preserves the original input, so decryption returns the user's exact casing and formatting.
 
 ### 4. Zero-Downtime Key Rotation
-
-Encryption keys have a finite useful life. Compliance frameworks require periodic rotation. Suspected key compromise demands immediate rotation. encryptedcol supports this with a multi-phase process that requires no downtime:
-
-**Phase 1 -- Add the new key:** Register both old and new keys. Set the new key as the default for new writes. Old data remains readable.
-
-**Phase 2 -- Migrate existing data:** Iterate through rows encrypted with the old key. The library decrypts with the old key and re-encrypts with the new key, recomputing blind indexes in the process. Migration can happen row-by-row or in batches, and the system remains fully operational throughout.
-
-**Phase 3 -- Remove the old key:** Once all rows have been migrated, the old key is deregistered. Only the new key remains.
-
-**Business value:** Key rotation is a compliance requirement that is often deferred because it is operationally painful. encryptedcol makes it a routine, non-disruptive operation.
-
-**Rotation utilities provided:**
-- `NeedsRotation()` -- header-only check (no decryption) to identify rows still on old keys
-- `ExtractKeyID()` -- inspect which key version a ciphertext uses without decrypting
-- `RotateValue()` -- decrypt-then-re-encrypt a single value
-- `RotateStringIndexed()` / `RotateStringIndexedNormalized()` -- rotate both ciphertext and blind index in one call
+Keys have a finite useful life (compliance, suspected compromise, offboarding). encryptedcol supports a three-phase, no-downtime rotation: (1) add the new key and make it the default for new writes while old data stays readable; (2) migrate existing rows by decrypting with the old key and re-encrypting with the new one, recomputing blind indexes; (3) deregister the old key once migration is complete. **Business value:** rotation becomes a routine, non-disruptive operation instead of a deferred compliance liability. Utilities: `NeedsRotation()` (header-only, no decryption), `ExtractKeyID()`, `RotateValue()`, `RotateStringIndexed()` / `RotateStringIndexedNormalized()`.
 
 ### 5. Automatic Cross-Version Search During Rotation
-
-During the rotation window, the database contains rows encrypted under different key versions. Each key version produces a different blind index hash for the same plaintext. A search query must match against all active key versions.
-
-The library's `SearchCondition` builder automatically generates SQL with OR clauses for each active key version:
-
-```sql
-(key_id = 'v1' AND email_idx = <hmac_v1>) OR (key_id = 'v2' AND email_idx = <hmac_v2>)
-```
-
-**Business value:** Search continues to work seamlessly during key rotation. There is no "rotation window" where lookups break or return incomplete results.
+During the rotation window the table holds rows under multiple key versions, each producing a *different* blind index for the same plaintext. The `SearchCondition` builder automatically emits OR clauses per active key version: `(key_id = $1 AND email_idx = $2) OR (key_id = $3 AND email_idx = $4)`. **Business value:** search stays correct and complete throughout rotation — there is no window where lookups break.
 
 ### 6. External Key Management Integration
-
-For enterprise environments, encryption keys should not be stored in application config files or environment variables. They should live in dedicated secrets managers.
-
-The `KeyProvider` interface allows integration with any external key management system:
-
-- HashiCorp Vault
-- AWS KMS
-- Google Cloud KMS
-- Azure Key Vault
-- Any custom secrets manager
-
-The interface requires only three methods: retrieve a key by ID, report the default key ID, and list all active key IDs. A built-in `StaticKeyProvider` is included for simpler deployments and testing.
-
-**Business value:** The library adapts to the organization's existing secrets infrastructure rather than imposing its own key storage model.
+Keys belong in secrets managers, not config files. The `KeyProvider` interface (three methods: `GetKey`, `DefaultKeyID`, `ActiveKeyIDs`) integrates with HashiCorp Vault, AWS Key Management Service (KMS), Google Cloud KMS, Azure Key Vault, or any custom secrets store. A built-in `StaticKeyProvider` covers testing and simple deployments. **Business value:** the library adapts to existing secrets infrastructure rather than imposing its own key-storage model.
 
 ### 7. Transparent Compression for Large Payloads
+Encrypted bytes are high-entropy and defeat PostgreSQL's internal TOAST compression — even for fields that would normally compress well (large JSON, text). encryptedcol applies zstd compression **before** encryption when it helps, recording the outcome in a flag byte and decompressing automatically on read. **Business value:** storage costs for large encrypted fields stay under control, with no application-level awareness required. Configurable: 1 KB default threshold, 10% minimum-savings requirement, or fully disabled.
 
-Encrypted data is high-entropy (random-looking bytes). PostgreSQL's internal TOAST compression cannot compress it, even for fields that would normally compress well (large JSON blobs, text content, API payloads). This means encryption can significantly increase storage costs for large fields.
-
-The library applies zstd compression **before** encryption when beneficial. For large JSON or text fields, this typically achieves 60-90% size reduction. The compression is transparent: the ciphertext format includes a flag byte indicating whether compression was applied, and decompression happens automatically on read.
-
-**Business value:** Storage costs for large encrypted fields (notes, JSON payloads, raw API responses) are kept under control. Compression is automatic and requires no application-level awareness.
-
-**Configurable behavior:**
-- Default threshold: 1KB (fields smaller than this skip compression)
-- Minimum savings requirement: 10% (if compression doesn't save at least 10%, the original data is used)
-- Can be disabled entirely for already-compressed content or to eliminate compression oracle risk
-
-### 8. NULL and Empty String Semantics
-
-Database applications distinguish between NULL (value is unknown/not set) and empty string (value is known to be empty). The library preserves this distinction:
-
-- `nil` (NULL) input produces `nil` (NULL) output -- no encryption overhead for absent values
-- Empty string is encrypted normally by default
-- Optional `WithEmptyStringAsNull()` mode treats empty strings as NULL for storage savings
-
-Pointer-based helpers (`SealStringPtr` / `OpenStringPtr`) map cleanly to nullable database columns.
-
-**Business value:** The encryption layer does not corrupt database semantics. Application code that distinguishes between "user has no phone number" (NULL) and "user explicitly set phone to empty" (empty string) continues to work correctly.
+### 8. NULL and Empty-String Semantics
+The library preserves the database distinction between NULL (unknown/not set) and empty string (known-empty): `nil` in → `nil` out (no encryption overhead for absent values); empty strings are encrypted normally by default; optional `WithEmptyStringAsNull()` treats `""` as NULL. Pointer helpers (`SealStringPtr` / `OpenStringPtr`) map cleanly to nullable columns. **Business value:** the encryption layer does not corrupt database semantics — "no phone number" (NULL) stays distinct from "explicitly empty."
 
 ### 9. Tamper Detection
+The ciphertext embeds the key ID twice: in the plaintext header (for key lookup without decryption) and inside the authenticated secretbox payload (cryptographically bound). On decrypt, both must match (verified in constant time). **Business value:** defense in depth against **key-confusion attacks** — an attacker with database write access cannot swap the header key ID to force decryption under the wrong key.
 
-The ciphertext format embeds the key ID in two places: once in the plaintext header (for efficient key lookup without decryption) and once inside the authenticated secretbox payload (cryptographically bound to the ciphertext). On decryption, the library verifies that both key IDs match.
-
-This prevents **key confusion attacks** where an attacker who can modify stored ciphertext swaps the key ID header to cause decryption with the wrong key. The inner key ID, being inside the authenticated encryption envelope, cannot be modified without detection.
-
-**Business value:** Defense in depth against ciphertext tampering. Even if an attacker has write access to the database, they cannot trick the application into misinterpreting data.
-
-### 10. Secure Key Material Lifecycle
-
-The library takes explicit responsibility for key material in memory:
-
-- Master keys are copied on input and zeroed from the config after key derivation
-- Derived keys (encryption and HMAC) are cached at initialization and zeroed on `Close()`
-- `StaticKeyProvider` deep-copies keys and provides its own `Close()` for zeroing
-- If the OS cryptographic random source fails, the library panics immediately rather than producing weak nonces that might be silently accepted
-
-**Business value:** Minimizes the window during which key material exists in application memory, reducing exposure in memory-dump attacks or core-dump scenarios.
+### 10. Secure Key-Material Lifecycle
+Master keys are copied on input and zeroed from config after key derivation; derived encryption/HMAC keys are cached at init and zeroed on `Close()`; `StaticKeyProvider` deep-copies keys and offers its own `Close()`; and if the OS random source fails, the library **panics** rather than emit weak nonces. **Business value:** minimizes the window during which key material lives in memory, reducing exposure to memory-dump and core-dump scenarios.
 
 ---
 
-## How It Fits Into an Application Architecture
+# Business Logic and Rules / Key Design Decisions
 
-The library is designed to live in the **repository/data access layer** of a Go application. Domain models remain clean plain structs with no encryption awareness. The repository layer handles encryption on write, decryption on read, and blind index computation on search.
+| Decision | Rule | Why This Matters |
+|---|---|---|
+| **Cipher** | XSalsa20-Poly1305 (NaCl secretbox), 24-byte random nonces | Authenticated encryption with large random nonces; simpler and harder to misuse than AES-GCM (no nonce-reuse footgun at this size). |
+| **Key derivation** | One 32-byte master key per `key_id`; HKDF-SHA256 derives separate encryption and HMAC keys, cached at init | A single managed secret per version; derived keys never recomputed per operation (zero per-op key-derivation cost). |
+| **Key ID in header AND payload** | Inner key ID authenticated by secretbox; verified against outer header on decrypt | Prevents key-confusion attacks. **Do not remove the inner key ID "for efficiency."** |
+| **Static HMAC blind index** | `HMAC(derivedKey, normalized_value)` — deterministic, no per-row salt | Deliberate, enabling **global search** across all rows with one query (cross-tenant lookups, "find by email anywhere"). The trade-off: blind indexes reveal equality. |
+| **Blind-index entropy guidance** | Use blind indexes only on **high-entropy** fields (email, username, phone, UUID); never on low-entropy fields (status, boolean, enum) | Low-entropy indexes leak frequency/equality patterns to anyone with database read access. This is a usage rule the product documents, not a code bug to "fix." |
+| **Normalization scope** | Normalizers affect **only** the blind index; ciphertext preserves the original input | Users get case-insensitive/format-agnostic search while seeing their exact original value on read. Same normalizer must be used on write and search. |
+| **Compression** | Skip if disabled or `< threshold` (default 1 KB); only use result if it saves `≥ 10%`; `0x00`=none, `0x01`=zstd, `0x02`=snappy (reserved) | Avoids wasting cycles and avoids enlarging incompressible data; flag byte keeps the format forward-compatible. |
+| **Zip-bomb cap** | Decompression rejected above **64 MB** (`ErrDecompressionFailed`) | A small compressed payload can't be used to exhaust memory. |
+| **`crypto/rand` failure** | **Panic**, never return an ignorable error | An entropy failure is an unrecoverable cryptographic state; failing loud beats emitting weak nonces. **Do not change to return an error.** |
+| **NULL vs empty string** | `nil` preserved both directions; empty string encrypted unless `WithEmptyStringAsNull()` | Encryption must not corrupt database semantics. |
+| **`key_id` is per row, not per field** | All encrypted columns in a row share one `key_id TEXT` | Simplifies rotation (rotate the whole row) and search (one `key_id` condition per clause). |
+| **Column-name validation** | Column names interpolated into SQL must match `^[A-Za-z_][A-Za-z0-9_]*$`, else **panic** | Blind-index search interpolates the column name; strict validation blocks SQL injection via column names. Values always go through `$N` parameters. |
+| **Parameter limit** | Search panics if `paramOffset` is out of `1..65535` or key count would exceed the PostgreSQL parameter ceiling | Surfaces misuse early rather than producing a malformed query at runtime. |
+| **Concurrency** | A `Cipher` is safe for concurrent use; one instance can serve the whole app | Construct once, share everywhere; `Close()` makes further use return `ErrCipherClosed` (or panic on `Seal`/`BlindIndex`). |
 
+**Error contract** — all errors carry the `encryptedcol:` prefix and support `errors.Is()`:
+
+| Error | Meaning |
+|---|---|
+| `ErrDecryptionFailed` | Secretbox authentication failed (wrong key or corrupted data) |
+| `ErrKeyIDMismatch` | Inner/outer key ID disagree (tampering detected) |
+| `ErrKeyNotFound` | Requested key ID not registered |
+| `ErrInvalidKeySize` | Master key not exactly 32 bytes |
+| `ErrWasNull` | Ciphertext was nil (database NULL) |
+| `ErrDecompressionFailed` | Zstd decompression failed or exceeded the 64 MB cap |
+| `ErrInvalidFormat` | Ciphertext byte layout malformed |
+| `ErrNoKeys` | No keys provided to the constructor |
+| `ErrDefaultKeyNotFound` | Specified default key ID not in the registry |
+| `ErrInvalidKeyID` | Key ID empty or longer than 255 bytes |
+| `ErrUnsupportedCompression` | Unknown/unsupported compression algorithm |
+| `ErrCipherClosed` | Cipher used after `Close()` |
+
+**Ciphertext format:**
 ```
-[Domain Model]  <-->  [Repository Layer + encryptedcol]  <-->  [PostgreSQL/Supabase]
-   (plaintext)         (encrypt/decrypt/index)                  (ciphertext + blind indexes)
+[flag:1][keyIDLen:1][keyID:n][nonce:24][secretbox(innerKeyID + plaintext)]
 ```
 
-This keeps encryption concerns out of business logic, service layers, and API handlers. The domain model for a User has a plain `Email string` field. Only the repository knows that this maps to `email_encrypted BYTEA`, `email_idx BYTEA`, and `key_id TEXT` in the database.
+---
+
+# How to Think About Code Changes
+
+This is a **cryptographic library**; correctness and backward compatibility are non-negotiable. Hard constraints:
+
+- **Never break the ciphertext format.** Existing rows in production databases must keep decrypting. The flag byte and inner-key-ID layout are part of the on-disk contract.
+- **Do not "fix" the intentional anti-patterns** documented in `AGENTS.md`: static HMAC blind indexes (they enable global search), the panic on `crypto/rand` failure, and the duplicated inner/outer key ID. Changing any of these requires explicit user approval and is a feature decision, not a bug fix.
+- **Keep secrets handled correctly:** copy keys on input, zero them after derivation and on `Close()`, never log key material or plaintext, and use constant-time comparison for authentication checks.
+- **No database-driver dependency.** The library deliberately knows nothing about `pgx`, `database/sql`, or any ORM — it returns bytes and SQL fragments. Driver wiring belongs in the consuming service, not here. (Schema and integration *guidance* lives in `README.md` / `INTEGRATION_GUIDE.md`, not in code.)
+- **Validate before interpolating into SQL.** Anything placed directly into a query string (column names) must pass `isValidColumnName`; everything else must be a bound parameter.
+- **Test like crypto code:** table-driven tests with `testify/require`, race testing, and benchmarks for hot paths. Coverage is high (~97%); new code should preserve that.
+- **Versioning / commit discipline** (per `AGENTS.md`): bump `VERSION` and annotate `CHANGELOG.md` for any code change — but read `VERSION` only at the last moment to avoid collisions with parallel agents. (Documentation-only changes such as this file follow the doc-commit convention and do not bump `VERSION`.)
+
+What belongs **here**: encryption/decryption, key derivation, blind indexing, normalization, compression, rotation helpers, the search-condition builder, and the key-provider interface. What belongs **elsewhere** (the consuming service or `tablebox`): database connections, migrations, transaction handling, HTTP/API surfaces, and tenancy/business logic.
 
 ---
 
-## Database Schema Impact
+# Current State / Status
 
-For each encrypted field, the schema changes are:
+- **Version:** 1.0.3 — stable (promoted to v1.0.0 in February 2026).
+- **Module:** `github.com/ai8future/encryptedcol`, requires **Go 1.24+**.
+- **Dependencies:** `golang.org/x/crypto` (secretbox + HKDF), `github.com/klauspost/compress` (zstd), `github.com/stretchr/testify` (tests only).
+- **Quality:** comprehensive table-driven unit tests across every module (cipher, blind index, search, compression, format, normalization, key derivation, rotation, helpers, errors), benchmarks for hot paths, and race testing; line coverage ~97%.
 
-- **Non-searchable field:** One BYTEA column (`{field}_encrypted`) replaces the plaintext column
-- **Searchable field:** Two BYTEA columns (`{field}_encrypted` + `{field}_idx`) replace the plaintext column, plus a composite index on `(key_id, {field}_idx)`
-- **Per-row key tracking:** One `key_id TEXT` column shared across all encrypted fields in the row
+**Built and working:** XSalsa20-Poly1305 encryption with NULL preservation; HKDF-SHA256 key derivation; HMAC-SHA256 blind indexing with normalizers; type-safe helpers (string, `int64`, JSON generics, pointer variants); multi-key rotation with zero-downtime tooling; cross-version search builder; zstd compression with zip-bomb protection; `KeyProvider` interface plus `StaticKeyProvider`; tamper detection via dual key-ID authentication; secure key-material zeroing.
 
-The `key_id` column is shared per row (not per field) by design. All encrypted fields in a row use the same key version, which simplifies rotation (rotate the entire row at once) and search (one key_id condition per search clause).
-
----
-
-## Performance Characteristics
-
-- **Encryption/decryption overhead:** XSalsa20-Poly1305 is fast in software. For typical database fields (bytes to low kilobytes), the per-operation overhead is negligible compared to network round-trip and database query time.
-- **Key derivation:** HKDF is performed once at cipher initialization and cached. There is zero per-operation key derivation cost.
-- **Blind index computation:** One HMAC-SHA256 per field per write. One HMAC per active key version per search query.
-- **Search performance:** Standard PostgreSQL B-tree index lookup on BYTEA columns. During key rotation with N active keys, search performs N index seeks (one per key version OR clause).
-- **Compression:** zstd encoder/decoder are initialized once (singleton) and reused. Compression work uses pooled buffers. Decompression is capped at 64MB to prevent zip-bomb attacks.
-- **Concurrency:** The `Cipher` instance is safe for concurrent use across goroutines. A single cipher can serve the entire application.
-
----
-
-## Security Model -- What Is and Is Not Protected
-
-### Protected against:
-- Database breach (dump, leak, unauthorized access) -- attacker gets only ciphertext
-- Cloud provider access to database storage -- zero-knowledge
-- SQL injection that reads data -- returns ciphertext, not plaintext
-- Key confusion / ciphertext header tampering -- inner key ID authentication
-- Weak nonce generation -- panics on entropy failure rather than degrading silently
-- Compression oracle attacks -- compression is optional and can be disabled
-
-### Not protected against:
-- Compromise of the application itself (the application holds the keys)
-- Frequency analysis on blind-indexed low-entropy fields
-- Range queries or partial-match search on encrypted fields (only exact match is supported)
-- Traffic analysis (ciphertext length correlates with plaintext length, modulo compression)
-
----
-
-## Maturity and Status
-
-The library is at version 1.0.3, promoted to stable in February 2026. It has comprehensive unit tests across all modules (cipher, blind indexing, search, compression, format, normalization, key derivation, rotation, helpers, errors), benchmark tests for performance-critical paths, and race-condition testing. The module is published as `github.com/ai8future/encryptedcol` and requires Go 1.24+.
-
----
-
-## Summary of Business Goals
-
-1. **Eliminate database as an attack surface** for sensitive data by ensuring plaintext never reaches the database.
-2. **Maintain practical searchability** on encrypted fields through blind indexing, so encryption does not break core application workflows (login, dedup, lookup).
-3. **Enable compliance** with data protection regulations that require encryption at rest and key rotation.
-4. **Minimize operational burden** of key rotation with zero-downtime migration tooling and automatic cross-version search.
-5. **Integrate with enterprise key management** via a pluggable provider interface.
-6. **Be reusable** as a standalone Go module across multiple services and projects, with no database driver coupling.
-7. **Preserve application semantics** (NULL handling, original casing, empty string distinction) so that encryption is transparent to business logic.
+**Explicitly not provided (by design):** range or partial-match (prefix/substring) search on encrypted fields — only exact match via blind index; protection against compromise of the application itself (it holds the keys); protection against frequency analysis on low-entropy blind-indexed fields; defense against traffic analysis (ciphertext length still correlates with plaintext length, modulo compression). The `snappy` compression flag is reserved in the format but not implemented.
