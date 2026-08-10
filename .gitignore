@@ -50,3 +50,8 @@ dist/
 
 # Claude
 .claude/settings.local.json
+
+# Local agent/runtime state
+.omc/*
+!.omc/skills/
+.omx/
