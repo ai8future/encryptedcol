@@ -143,3 +143,5 @@ This prevents **key confusion attacks**. An attacker who can modify ciphertext h
 - Stay out of the _studies, _proposals, _rcodegen, _bugs_open, _bugs_fixed directories. Do not go into them or read from them unless specifically told to do so.
 
 - When you fix a bug, write short details on that bug and store it in _bugs_fixed. Depending on the severity or complexity, decide if you think you should be very brief - or less brief. Give your bug file a good name but always prepend the date. For example: 2026-12-31-failed-to-check-values-bug.md is a perfect name. Always lowercase. Always include the date in the filename.
+
+- At the beginning of a session, always assume your local .git could be out of date with the remote. Run `git fetch` and check status against the upstream branch before you branch, commit, or reason about what the current code looks like. Once per session is enough — no need to re-check before every operation.
